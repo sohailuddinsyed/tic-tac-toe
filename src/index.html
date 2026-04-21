@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connect 5</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #0a0a0f;
+  color: #00e5ff;
+  font-family: 'Courier New', monospace;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.screen {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  position: absolute;
+}
+
+.screen.active {
+  display: flex;
+  opacity: 1;
+}
+
+.screen.fade-out {
+  opacity: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 6vw, 4rem);
+  letter-spacing: 8px;
+  text-transform: uppercase;
+  text-shadow: 0 0 20px #00e5ff, 0 0 40px #00e5ff44;
+}
+
+h2 {
+  font-size: 1rem;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+.btn {
+  background: transparent;
+  border: 1px solid #00e5ff;
+  color: #00e5ff;
+  font-family: 'Courier New', monospace;
+  font-size: 1rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  padding: 12px 32px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  min-width: 180px;
+}
+
+.btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 16px #00e5ff88, 0 0 32px #00e5ff44;
+}
+
+.btn-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+#status-bar {
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-size: 0.85rem;
+  color: #00e5ff;
+  min-height: 1.2em;
+  margin-bottom: 8px;
+}
+
+#board {
+  --cell-size: 32px;
+  display: grid;
+  grid-template-columns: repeat(var(--grid-cols), var(--cell-size));
+  grid-template-rows: repeat(var(--grid-rows), var(--cell-size));
+  border: 1px solid rgba(0,229,255,0.2);
+}
+
+.cell {
+  width: var(--cell-size);
+  height: var(--cell-size);
+  border: 1px solid rgba(0,229,255,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+
+.piece {
+  width: 72%;
+  height: 72%;
+  border-radius: 50%;
+  animation: pop-in 0.18s ease forwards;
+}
+
+@keyframes pop-in {
+  from { transform: scale(0); }
+  to   { transform: scale(1); }
+}
+
+.piece.player-1 {
+  background: radial-gradient(circle at 35% 35%, #80f7ff, #00e5ff);
+  box-shadow: 0 0 8px #00e5ffaa;
+}
+
+.piece.player-2 {
+  background: radial-gradient(circle at 35% 35%, #ff80ab, #ff4081);
+  box-shadow: 0 0 8px #ff4081aa;
+}
+
+.cell.hover::after {
+  content: '';
+  width: 72%;
+  height: 72%;
+  border-radius: 50%;
+  position: absolute;
+  opacity: 0.3;
+}
+
+.cell.hover.p1::after { background: #00e5ff; }
+.cell.hover.p2::after { background: #ff4081; }
+
+.cell.win-highlight {
+  animation: win-pulse 1s ease-in-out infinite alternate;
+}
+
+@keyframes win-pulse {
+  from { box-shadow: inset 0 0 8px #00e5ff88; }
+  to   { box-shadow: inset 0 0 20px #00e5ffff, 0 0 12px #00e5ffaa; }
+}
+
+#result-msg {
+  font-size: clamp(1.2rem, 4vw, 2rem);
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  text-shadow: 0 0 16px currentColor;
+}
+</style>
+</head>
+<body>
+
+<!-- Menu Screen -->
+<div id="screen-menu" class="screen active">
+  <h1>Connect 5</h1>
+  <div class="btn-row">
+    <button class="btn" id="btn-two-player">Two Player</button>
+    <button class="btn" id="btn-vs-ai">VS AI</button>
+  </div>
+</div>
+
+<!-- Size Select Screen -->
+<div id="screen-size" class="screen">
+  <h2>Select Board Size</h2>
+  <div class="btn-row">
+    <button class="btn" id="btn-15">15 × 15</button>
+    <button class="btn" id="btn-19">19 × 19</button>
+  </div>
+</div>
+
+<!-- Game Screen -->
+<div id="screen-game" class="screen">
+  <div id="status-bar"></div>
+  <div id="board"></div>
+</div>
+
+<!-- End Screen -->
+<div id="screen-end" class="screen">
+  <div id="result-msg"></div>
+  <div class="btn-row">
+    <button class="btn" id="btn-play-again">Play Again</button>
+    <button class="btn" id="btn-main-menu">Main Menu</button>
+  </div>
+</div>
+
+<script>
+// ─── GameState ───────────────────────────────────────────────────────────────
+const GameState = (() => {
+  const state = {
+    mode: null, size: null, board: [],
+    currentPlayer: 1, status: 'idle',
+    winner: null, winCells: [], aiLocked: false
+  };
+  function init(mode, size) {
+    const n = size === 19 ? 19 : 15;
+    state.mode = mode; state.size = n;
+    state.board = Array.from({ length: n }, () => new Array(n).fill(0));
+    state.currentPlayer = 1; state.status = 'playing';
+    state.winner = null; state.winCells = []; state.aiLocked = false;
+  }
+  return { state, init };
+})();
+</script>
+
+<script>
+// ─── GameLogic ───────────────────────────────────────────────────────────────
+const GameLogic = (() => {
+  const DIRS = [[0,1],[1,0],[1,1],[1,-1]];
+
+  function checkWin(row, col) {
+    const { board, size } = GameState.state;
+    const player = board[row][col];
+    for (const [dr, dc] of DIRS) {
+      let fwd = 0, bck = 0;
+      for (let i = 1; i < size; i++) {
+        const r = row + dr*i, c = col + dc*i;
+        if (r<0||r>=size||c<0||c>=size||board[r][c]!==player) break;
+        fwd++;
+      }
+      for (let i = 1; i < size; i++) {
+        const r = row - dr*i, c = col - dc*i;
+        if (r<0||r>=size||c<0||c>=size||board[r][c]!==player) break;
+        bck++;
+      }
+      if (fwd + bck + 1 === 5) {
+        const cells = [];
+        for (let i = -bck; i <= fwd; i++) cells.push([row+dr*i, col+dc*i]);
+        return cells;
+      }
+    }
+    return null;
+  }
+
+  function checkDraw() {
+    const { board, size, winner } = GameState.state;
+    if (winner !== null) return false;
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++)
+        if (board[r][c] === 0) return false;
+    GameState.state.status = 'draw';
+    return true;
+  }
+
+  function nextTurn() {
+    GameState.state.currentPlayer = GameState.state.currentPlayer === 1 ? 2 : 1;
+  }
+
+  function placePiece(row, col) {
+    const state = GameState.state;
+    if (state.status !== 'playing') return;
+    if (row < 0 || row >= state.size || col < 0 || col >= state.size) return;
+    if (state.board[row][col] !== 0) return;
+    state.board[row][col] = state.currentPlayer;
+    const winCells = checkWin(row, col);
+    if (winCells) { state.status='won'; state.winner=state.currentPlayer; state.winCells=winCells; return; }
+    if (checkDraw()) return;
+    nextTurn();
+  }
+
+  return { placePiece, checkWin, checkDraw, nextTurn };
+})();
+</script>
+
+<script>
+// ─── AIPlayer ────────────────────────────────────────────────────────────────
+const AIPlayer = (() => {
+  const JITTER_FACTOR = 800;
+  const W = { open4:100000, blocked4:10000, open3:5000, blocked3:500, open2:200, single:10 };
+  const DIRS = [[0,1],[1,0],[1,1],[1,-1]];
+
+  function getCandidates(board, size) {
+    const occupied = [];
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++)
+        if (board[r][c] !== 0) occupied.push([r, c]);
+    if (occupied.length === 0) return [[Math.floor(size/2), Math.floor(size/2)]];
+    const seen = new Set(), candidates = [];
+    for (const [or, oc] of occupied) {
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++) {
+        const r = or+dr, c = oc+dc;
+        if (r<0||r>=size||c<0||c>=size||board[r][c]!==0) continue;
+        const key = r*size+c;
+        if (!seen.has(key)) { seen.add(key); candidates.push([r,c]); }
+      }
+    }
+    return candidates;
+  }
+
+  function scoreCell(board, row, col, player, size) {
+    let total = 0;
+    for (const [dr, dc] of DIRS) {
+      let count = 1, openFwd = false, openBck = false;
+      for (let i = 1; i < 6; i++) {
+        const r = row+dr*i, c = col+dc*i;
+        if (r<0||r>=size||c<0||c>=size) break;
+        if (board[r][c]===player) count++;
+        else { if (board[r][c]===0) openFwd=true; break; }
+      }
+      for (let i = 1; i < 6; i++) {
+        const r = row-dr*i, c = col-dc*i;
+        if (r<0||r>=size||c<0||c>=size) break;
+        if (board[r][c]===player) count++;
+        else { if (board[r][c]===0) openBck=true; break; }
+      }
+      const open = openFwd && openBck;
+      if (count >= 4) total += open ? W.open4 : W.blocked4;
+      else if (count === 3) total += open ? W.open3 : W.blocked3;
+      else if (count === 2) total += open ? W.open2 : W.single;
+      else total += W.single;
+    }
+    return total;
+  }
+
+  function getBestMove(board, size) {
+    const candidates = getCandidates(board, size);
+    let best = null, bestScore = -Infinity;
+    for (const [r, c] of candidates) {
+      const score = scoreCell(board,r,c,2,size) + scoreCell(board,r,c,1,size) + Math.random()*JITTER_FACTOR;
+      if (score > bestScore) { bestScore = score; best = [r,c]; }
+    }
+    return best;
+  }
+
+  function takeTurn() {
+    const state = GameState.state;
+    state.aiLocked = true;
+    const move = getBestMove(state.board, state.size);
+    if (move) GameLogic.placePiece(move[0], move[1]);
+    state.aiLocked = false;
+  }
+
+  return { getCandidates, scoreCell, getBestMove, takeTurn, JITTER_FACTOR };
+})();
+</script>
+
+<script>
+// ─── Renderer ────────────────────────────────────────────────────────────────
+const Renderer = (() => {
+  const SCREENS = ['menu', 'size', 'game', 'end'];
+
+  function showScreen(name) {
+    for (const s of SCREENS) {
+      const el = document.getElementById('screen-' + s);
+      el.classList.remove('active');
+    }
+    const next = document.getElementById('screen-' + name);
+    next.style.display = 'flex';
+    // Force reflow then fade in
+    requestAnimationFrame(() => {
+      next.classList.add('active');
+    });
+  }
+
+  function recalcCellSize(w, h, size) {
+    const cell = Math.max(4, Math.floor(Math.min(w * 0.92, h * 0.78) / size));
+    const board = document.getElementById('board');
+    if (board) {
+      board.style.setProperty('--cell-size', cell + 'px');
+      board.style.setProperty('--grid-cols', size);
+      board.style.setProperty('--grid-rows', size);
+    }
+    return cell;
+  }
+
+  function renderBoard() {
+    const { board, size, winCells, currentPlayer } = GameState.state;
+    recalcCellSize(window.innerWidth, window.innerHeight, size);
+
+    const container = document.getElementById('board');
+    const winSet = new Set(winCells.map(([r,c]) => r + ',' + c));
+
+    // Build a map of existing cells by key for reuse
+    const existing = {};
+    for (const el of container.querySelectorAll('.cell')) {
+      existing[el.dataset.row + ',' + el.dataset.col] = el;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        const key = r + ',' + c;
+        let cell = existing[key];
+        if (!cell) {
+          cell = document.createElement('div');
+          cell.className = 'cell';
+          cell.dataset.row = r;
+          cell.dataset.col = c;
+        }
+
+        // Sync piece
+        const val = board[r][c];
+        let piece = cell.querySelector('.piece');
+        if (val === 0) {
+          if (piece) piece.remove();
+        } else {
+          if (!piece) {
+            piece = document.createElement('div');
+            piece.className = 'piece player-' + val;
+            cell.appendChild(piece);
+          }
+        }
+
+        // Win highlight
+        if (winSet.has(key)) cell.classList.add('win-highlight');
+        else cell.classList.remove('win-highlight');
+
+        // Hover color class
+        cell.classList.remove('p1', 'p2');
+        cell.classList.add(currentPlayer === 1 ? 'p1' : 'p2');
+
+        fragment.appendChild(cell);
+      }
+    }
+    container.innerHTML = '';
+    container.appendChild(fragment);
+  }
+
+  function renderStatus() {
+    const { currentPlayer, aiLocked, mode } = GameState.state;
+    const bar = document.getElementById('status-bar');
+    if (!bar) return;
+    if (aiLocked) { bar.textContent = 'AI Thinking\u2026'; return; }
+    if (mode === 'vs-ai' && currentPlayer === 2) { bar.textContent = 'AI Thinking\u2026'; return; }
+    bar.textContent = 'Player ' + currentPlayer + '\u2019s Turn';
+  }
+
+  function renderEndScreen() {
+    const { winner } = GameState.state;
+    const msg = document.getElementById('result-msg');
+    if (winner === 1) { msg.textContent = 'Player 1 Wins'; msg.style.color = '#00e5ff'; }
+    else if (winner === 2) { msg.textContent = 'Player 2 Wins'; msg.style.color = '#ff4081'; }
+    else { msg.textContent = 'Draw'; msg.style.color = '#00e5ff'; }
+    showScreen('end');
+  }
+
+  return { showScreen, recalcCellSize, renderBoard, renderStatus, renderEndScreen };
+})();
+</script>
+
+<script>
+// ─── InputHandler ────────────────────────────────────────────────────────────
+const InputHandler = (() => {
+  function afterPlace() {
+    const state = GameState.state;
+    if (state.status === 'won' || state.status === 'draw') {
+      Renderer.renderBoard();
+      Renderer.renderEndScreen();
+    } else {
+      Renderer.renderBoard();
+      Renderer.renderStatus();
+      if (state.mode === 'vs-ai' && state.currentPlayer === 2) {
+        Renderer.renderStatus(); // show "AI Thinking…"
+        setTimeout(() => {
+          AIPlayer.takeTurn();
+          if (state.status === 'won' || state.status === 'draw') {
+            Renderer.renderBoard();
+            Renderer.renderEndScreen();
+          } else {
+            Renderer.renderBoard();
+            Renderer.renderStatus();
+          }
+        }, 300);
+      }
+    }
+  }
+
+  function startGame(mode, size) {
+    GameState.init(mode, size);
+    Renderer.showScreen('game');
+    Renderer.renderBoard();
+    Renderer.renderStatus();
+  }
+
+  function init() {
+    document.getElementById('btn-two-player').addEventListener('click', () => {
+      GameState.state.mode = 'two-player';
+      Renderer.showScreen('size');
+    });
+
+    document.getElementById('btn-vs-ai').addEventListener('click', () => {
+      GameState.state.mode = 'vs-ai';
+      Renderer.showScreen('size');
+    });
+
+    document.getElementById('btn-15').addEventListener('click', () => startGame(GameState.state.mode, 15));
+    document.getElementById('btn-19').addEventListener('click', () => startGame(GameState.state.mode, 19));
+
+    document.getElementById('btn-play-again').addEventListener('click', () => {
+      startGame(GameState.state.mode, GameState.state.size);
+    });
+
+    document.getElementById('btn-main-menu').addEventListener('click', () => {
+      GameState.state.mode = null;
+      GameState.state.size = null;
+      Renderer.showScreen('menu');
+    });
+
+    // Board click delegation
+    document.getElementById('board').addEventListener('click', (e) => {
+      const cell = e.target.closest('.cell');
+      if (!cell) return;
+      const state = GameState.state;
+      if (state.status !== 'playing' || state.aiLocked) return;
+      const r = parseInt(cell.dataset.row, 10);
+      const c = parseInt(cell.dataset.col, 10);
+      if (state.board[r][c] !== 0) return;
+      GameLogic.placePiece(r, c);
+      afterPlace();
+    });
+
+    // Hover delegation
+    document.getElementById('board').addEventListener('mouseover', (e) => {
+      const cell = e.target.closest('.cell');
+      if (!cell) return;
+      const state = GameState.state;
+      const r = parseInt(cell.dataset.row, 10);
+      const c = parseInt(cell.dataset.col, 10);
+      if (state.board[r][c] === 0 && !state.aiLocked) cell.classList.add('hover');
+    });
+
+    document.getElementById('board').addEventListener('mouseout', (e) => {
+      const cell = e.target.closest('.cell');
+      if (cell) cell.classList.remove('hover');
+    });
+  }
+
+  return { init };
+})();
+</script>
+
+<script>
+// ─── ResizeHandler ───────────────────────────────────────────────────────────
+const ResizeHandler = (() => {
+  let timer = null;
+  function init() {
+    window.addEventListener('resize', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const { status } = GameState.state;
+        if (status === 'playing' || status === 'won' || status === 'draw') {
+          Renderer.renderBoard();
+        }
+      }, 100);
+    });
+  }
+  return { init };
+})();
+</script>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  InputHandler.init();
+  ResizeHandler.init();
+});
+</script>
+
+</body>
+</html>
